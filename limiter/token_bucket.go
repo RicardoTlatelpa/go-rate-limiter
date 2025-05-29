@@ -26,6 +26,13 @@ type TokenBucket struct {
 	mu sync.Mutex // thread safety
 }
 
+/* 
+	Why use float for tokens
+		smooths out burstiness
+		prevents under-utilization
+		useufll when refill rate is less than 1/sec
+*/
+
 func NewTokenBucket(capacity int, refillRate float64) *TokenBucket {
 	return &TokenBucket{
 		capacity: capacity,
@@ -37,20 +44,34 @@ func NewTokenBucket(capacity int, refillRate float64) *TokenBucket {
 
 func (tb *TokenBucket) Allow() bool {
 	tb.mu.Lock()
+	/* 
+		Locks the mutex to make this section thread safe
+		concurrent requests don't corrupt shared state (tokens, lastRefillTime)		
+	*/
 	defer tb.mu.Unlock()
-	
+	/*
+		mutex is automatically unlocked when the function exits, even if
+		early return occurs
+	*/
 	now := time.Now()
 	elapsed := now.Sub(tb.lastRefillTime).Seconds()
 	refilledTokens := elapsed * tb.refillRate
-
+	/*
+		Refilling tokens every second
+	*/
 	tb.tokens = min(float64(tb.capacity), tb.tokens+refilledTokens)
 	tb.lastRefillTime = now
 
+	/*
+
+	*/
 	if tb.tokens >= 1 {
 		tb.tokens -= 1
 		return true
 	}
-
+	/*
+		Consume the token if there's at least 1 token in the TokenBucket
+	*/
 	return false
 }
 
