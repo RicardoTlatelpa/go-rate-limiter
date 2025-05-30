@@ -17,7 +17,7 @@ func AllowRequestRedis(rdb *redis.Client, userKey string, capacity int, refillRa
 	if err != nil {
 		return false, err
 	}
-
+	
 	var tokens float64 = float64(capacity)
 	var lastRefillTime float64 = float64(time.Now().Unix())
 
@@ -29,6 +29,9 @@ func AllowRequestRedis(rdb *redis.Client, userKey string, capacity int, refillRa
 	}
 
 	now := float64(time.Now().Unix())
+
+	rdb.Incr(ctx, "rate:"+userKey+":requests")
+	rdb.Set(ctx, "rate:"+userKey+":last_seen", now,0)
 	elapsed := now - lastRefillTime
 	refilled := elapsed * refillRate
 	tokens = minFloat(float64(capacity), tokens+refilled)
@@ -38,6 +41,13 @@ func AllowRequestRedis(rdb *redis.Client, userKey string, capacity int, refillRa
 		tokens -= 1.0
 		allowed = true
 	}
+	if allowed {
+		rdb.Incr(ctx, "rate:"+userKey+":allowed")
+	} else {
+		rdb.Incr(ctx,"rate:"+userKey+":blocked")
+	}
+
+	rdb.SetNX(ctx, "rate:"+userKey+":first_seen", now,0)
 	pipe := rdb.TxPipeline()
 	pipe.Set(ctx, keyTokens, tokens, 0)
 	pipe.Set(ctx, keyLast, now, 0)
