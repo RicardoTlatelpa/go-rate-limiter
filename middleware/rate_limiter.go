@@ -4,13 +4,22 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/RicardoTlatelpa/go-rate-limiter/limiter"
 )
+type ClientStats struct {
+	Requests int
+	Allowed int
+	Blocked int
+	FirstSeen time.Time
+	LastSeen time.Time
 
+}
 type RateLimiterMiddleware struct {
 	buckets map[string]*limiter.TokenBucket
-	mu sync.Mutex // prevent inconsistencies when reading/writing data
+	Stats map[string]*ClientStats
+	Mu sync.Mutex // prevent inconsistencies when reading/writing data
 	cap int
 	refill float64
 }
@@ -18,6 +27,7 @@ type RateLimiterMiddleware struct {
 func NewRateLimiterMiddleware(capacity int, refillRate float64) *RateLimiterMiddleware{
 	return &RateLimiterMiddleware{
 		buckets: make(map[string]*limiter.TokenBucket),
+		Stats: make(map[string]*ClientStats),
 		cap: capacity,
 		refill: refillRate,
 	}
@@ -26,19 +36,20 @@ func NewRateLimiterMiddleware(capacity int, refillRate float64) *RateLimiterMidd
 // getBucket fetches or creates a TokenBucket for a given IP address
 
 func (rl *RateLimiterMiddleware) getBucket(ip string) *limiter.TokenBucket {
-	rl.mu.Lock() // lock the function execution
-	defer rl.mu.Unlock() // after function runs => unlock the mutex
+	rl.Mu.Lock() // lock the function execution
+	defer rl.Mu.Unlock() // after function runs => unlock the mutex
 
-	if bucket, exists := rl.buckets[ip]; exists {
-		return bucket
+	if _, exists := rl.buckets[ip]; !exists {
+		rl.buckets[ip] = limiter.NewTokenBucket(rl.cap, rl.refill)
+		rl.Stats[ip] = &ClientStats{
+			FirstSeen: time.Now(),
+		}
 	}
-
-	bucket := limiter.NewTokenBucket(rl.cap, rl.refill)
-	rl.buckets[ip] = bucket
-	return bucket
+	rl.Stats[ip].LastSeen = time.Now()
+	return rl.buckets[ip]
 }
 
-func (rl *RateLimiterMiddleware) MiddlewareFunc(next http.Handler) http.Handler{
+func (rl *RateLimiterMiddleware) MiddlewareFunc(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request){
 		ip, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil {
@@ -46,9 +57,20 @@ func (rl *RateLimiterMiddleware) MiddlewareFunc(next http.Handler) http.Handler{
 		}
 
 		bucket := rl.getBucket(ip)
-		if bucket.Allow(){
+		allowed := bucket.Allow()
+
+		rl.Mu.Lock()
+		Stats := rl.Stats[ip]
+		Stats.Requests++
+		if allowed {
+			Stats.Allowed++			
+		} else {
+			Stats.Blocked++
+		}
+		rl.Mu.Unlock()
+		if allowed {
 			next.ServeHTTP(w,r)
-		}else {
+		} else {
 			http.Error(w, "429 - Rate limit exceeded", http.StatusTooManyRequests)
 		}
 	}) 
