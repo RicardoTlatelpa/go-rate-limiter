@@ -4,12 +4,21 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/RicardoTlatelpa/go-rate-limiter/limiter"
 )
+type ClientStats struct {
+	Requests int
+	Allowed int
+	Blocked int
+	FirstSeen time.Time
+	LastSeen time.Time
 
+}
 type RateLimiterMiddleware struct {
 	buckets map[string]*limiter.TokenBucket
+	stats map[string]*ClientStats
 	mu sync.Mutex // prevent inconsistencies when reading/writing data
 	cap int
 	refill float64
