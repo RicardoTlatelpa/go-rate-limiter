@@ -48,7 +48,7 @@ func (rl *RateLimiterMiddleware) getBucket(ip string) *limiter.TokenBucket {
 	return rl.buckets[ip]
 }
 
-func (rl *RateLimiterMiddleware) MiddlewareFunc(next http.Handler) http.Handler{
+func (rl *RateLimiterMiddleware) MiddlewareFunc(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request){
 		ip, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil {
@@ -56,9 +56,20 @@ func (rl *RateLimiterMiddleware) MiddlewareFunc(next http.Handler) http.Handler{
 		}
 
 		bucket := rl.getBucket(ip)
-		if bucket.Allow(){
+		allowed := bucket.Allow()
+
+		rl.mu.Lock()
+		stats := rl.stats[ip]
+		stats.Requests++
+		if allowed {
+			stats.Allowed++			
+		} else {
+			stats.Blocked++
+		}
+		rl.mu.Unlock()
+		if allowed {
 			next.ServeHTTP(w,r)
-		}else {
+		} else {
 			http.Error(w, "429 - Rate limit exceeded", http.StatusTooManyRequests)
 		}
 	}) 
