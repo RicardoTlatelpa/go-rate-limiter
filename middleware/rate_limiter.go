@@ -18,8 +18,8 @@ type ClientStats struct {
 }
 type RateLimiterMiddleware struct {
 	buckets map[string]*limiter.TokenBucket
-	stats map[string]*ClientStats
-	mu sync.Mutex // prevent inconsistencies when reading/writing data
+	Stats map[string]*ClientStats
+	Mu sync.Mutex // prevent inconsistencies when reading/writing data
 	cap int
 	refill float64
 }
@@ -27,6 +27,7 @@ type RateLimiterMiddleware struct {
 func NewRateLimiterMiddleware(capacity int, refillRate float64) *RateLimiterMiddleware{
 	return &RateLimiterMiddleware{
 		buckets: make(map[string]*limiter.TokenBucket),
+		Stats: make(map[string]*ClientStats),
 		cap: capacity,
 		refill: refillRate,
 	}
@@ -35,16 +36,16 @@ func NewRateLimiterMiddleware(capacity int, refillRate float64) *RateLimiterMidd
 // getBucket fetches or creates a TokenBucket for a given IP address
 
 func (rl *RateLimiterMiddleware) getBucket(ip string) *limiter.TokenBucket {
-	rl.mu.Lock() // lock the function execution
-	defer rl.mu.Unlock() // after function runs => unlock the mutex
+	rl.Mu.Lock() // lock the function execution
+	defer rl.Mu.Unlock() // after function runs => unlock the mutex
 
 	if _, exists := rl.buckets[ip]; !exists {
 		rl.buckets[ip] = limiter.NewTokenBucket(rl.cap, rl.refill)
-		rl.stats[ip] = &ClientStats{
+		rl.Stats[ip] = &ClientStats{
 			FirstSeen: time.Now(),
 		}
 	}
-	rl.stats[ip].LastSeen = time.Now()
+	rl.Stats[ip].LastSeen = time.Now()
 	return rl.buckets[ip]
 }
 
@@ -58,15 +59,15 @@ func (rl *RateLimiterMiddleware) MiddlewareFunc(next http.Handler) http.Handler 
 		bucket := rl.getBucket(ip)
 		allowed := bucket.Allow()
 
-		rl.mu.Lock()
-		stats := rl.stats[ip]
-		stats.Requests++
+		rl.Mu.Lock()
+		Stats := rl.Stats[ip]
+		Stats.Requests++
 		if allowed {
-			stats.Allowed++			
+			Stats.Allowed++			
 		} else {
-			stats.Blocked++
+			Stats.Blocked++
 		}
-		rl.mu.Unlock()
+		rl.Mu.Unlock()
 		if allowed {
 			next.ServeHTTP(w,r)
 		} else {
