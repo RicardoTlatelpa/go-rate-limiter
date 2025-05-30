@@ -38,13 +38,14 @@ func (rl *RateLimiterMiddleware) getBucket(ip string) *limiter.TokenBucket {
 	rl.mu.Lock() // lock the function execution
 	defer rl.mu.Unlock() // after function runs => unlock the mutex
 
-	if bucket, exists := rl.buckets[ip]; exists {
-		return bucket
+	if _, exists := rl.buckets[ip]; !exists {
+		rl.buckets[ip] = limiter.NewTokenBucket(rl.cap, rl.refill)
+		rl.stats[ip] = &ClientStats{
+			FirstSeen: time.Now(),
+		}
 	}
-
-	bucket := limiter.NewTokenBucket(rl.cap, rl.refill)
-	rl.buckets[ip] = bucket
-	return bucket
+	rl.stats[ip].LastSeen = time.Now()
+	return rl.buckets[ip]
 }
 
 func (rl *RateLimiterMiddleware) MiddlewareFunc(next http.Handler) http.Handler{
